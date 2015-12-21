@@ -1,0 +1,160 @@
+---
+title: "Kaggle Titanic"
+output: html_document
+---
+
+```{r, echo=FALSE}
+library(ggplot2)
+library(grid)
+library(gridExtra)
+library(scales)
+library(corrplot)
+
+setwd("~/kaggle/titanic")
+
+# data loading
+train <- read.csv("data/train.csv")
+test <- read.csv("data/test.csv")
+```
+
+#### Description from Web page:
+
+```{}
+VARIABLE DESCRIPTIONS:
+survival        Survival
+                (0 = No; 1 = Yes)
+pclass          Passenger Class
+                (1 = 1st; 2 = 2nd; 3 = 3rd)
+name            Name
+sex             Sex
+age             Age
+sibsp           Number of Siblings/Spouses Aboard
+parch           Number of Parents/Children Aboard
+ticket          Ticket Number
+fare            Passenger Fare
+cabin           Cabin
+embarked        Port of Embarkation
+                (C = Cherbourg; Q = Queenstown; S = Southampton)
+
+SPECIAL NOTES:
+Pclass is a proxy for socio-economic status (SES)
+ 1st ~ Upper; 2nd ~ Middle; 3rd ~ Lower
+
+Age is in Years; Fractional if Age less than One (1)
+ If the Age is Estimated, it is in the form xx.5
+
+With respect to the family relation variables (i.e. sibsp and parch)
+some relations were ignored.  The following are the definitions used
+for sibsp and parch.
+
+Sibling:  Brother, Sister, Stepbrother, or Stepsister of Passenger Aboard Titanic
+Spouse:   Husband or Wife of Passenger Aboard Titanic (Mistresses and Fiances Ignored)
+Parent:   Mother or Father of Passenger Aboard Titanic
+Child:    Son, Daughter, Stepson, or Stepdaughter of Passenger Aboard Titanic
+
+Other family relatives excluded from this study include cousins,
+nephews/nieces, aunts/uncles, and in-laws.  Some children travelled
+only with a nanny, therefore parch=0 for them.  As well, some
+travelled with very close friends or neighbors in a village, however,
+the definitions do not support such relations.
+```
+
+#### Overview training data set:
+
+```{r, echo=FALSE}
+str(train)
+```
+
+```{r, echo=FALSE}
+# fill empty embarked cities as "S"
+train[train$Embarked == "", ]$Embarked <- "S"
+train$Embarked <- droplevels(train$Embarked)
+#test[test$Embarked == "", ]$Embarked <- "S"
+
+# cut Fares in groups
+# train$FareGroup <- cut(train$Fare, breaks=hist(as.numeric(train$Fare), breaks="Scott", plot=FALSE)$breaks, include.lowest = TRUE) # too skewed
+train$FareQuant <- cut(train$Fare, breaks=quantile(train$Fare, probs=seq(0, 1, 0.1)), include.lowest = TRUE)
+
+# convert to factors
+train$Survived <- as.factor(train$Survived)
+for (column in c("Pclass", "SibSp", "Parch")) {
+  train[,column] <- as.factor(train[,column])
+  test[,column]  <- as.factor(test[,column])
+}
+```
+
+#### fixing missing age with random values
+
+before fix:
+```{r, echo=FALSE}
+summary(train$Age) # 177 NA's
+
+train$MissingAge <- is.na(train$Age)
+```
+
+after fix:
+```{r, echo=FALSE}
+# fix age
+ageMin <- min(train$Age, na.rm = TRUE)
+ageMax <- max(train$Age, na.rm = TRUE)
+train$Age[is.na(train$Age)] <- as.integer(runif(sum(is.na(train$Age)), ageMin, ageMax))
+
+summary(train$Age) # 0 NA's
+```
+
+### Explorative Analysis
+```{r, echo=FALSE, warning=FALSE}
+# simple plots
+qplot(data=train, Age, binwidth=1)
+
+gPclass   <- qplot(data=train, Pclass)
+gEmbarked <- qplot(data=train, Embarked)
+gSurvived <- qplot(data=train, Survived)
+gSex      <- qplot(data=train, Sex)
+gSibSp    <- qplot(data=train, SibSp)
+gParch    <- qplot(data=train, Parch)
+
+grid.arrange(gSurvived, gSex, gPclass, gEmbarked, gSibSp, gParch, nrow=2, ncol=3)
+```
+
+
+
+### Survival by Sex, Age, and Pclass
+```{r, echo=FALSE, warning=FALSE}
+
+gAge <- ggplot(train, aes(x=Survived, y=Age))
+gAge <- gAge + geom_violin(adjust = 0.5, alpha = 0.3, width=0.5)
+gAge <- gAge + geom_dotplot(binaxis='y', stackdir='center', dotsize=0.8, alpha= 0.4, binwidth = 1, position=position_jitter(width = 0.05), aes(fill=Sex, col=Sex))
+gAge <- gAge + facet_grid(Pclass ~ Sex)
+#gAge <- gAge + theme(legend.position = c(1, 0.3), legend.justification = c(1, 1), legend.text=element_text(size=6), legend.background = element_rect(fill=alpha('white', 0.5)))
+gAge + coord_flip()
+
+#gSex <- qplot(y = Survived, x = Sex, data = train, position="jitter", col = Sex, dotsize=0.5, alpha= 0.4) + facet_grid(. ~ Sex)
+#grid.arrange(gAge + coord_flip(), gSex + ylab("") + theme(legend.position = "none"), ncol=2)
+```
+
+### Fare Distribution
+```{r, echo=FALSE}
+ggplot(train, aes(y = Fare, x = Pclass)) + geom_point(color="blue", alpha="0.2", position="jitter")
+```
+
+### Known Cabins in Pclass
+```{r, echo=FALSE, warning=FALSE}
+# data enhancement
+train$KnownCabin <- as.factor(train$Cabin != "")
+
+ # remove everything besides cabin letter
+train$CabinLetter <- factor(gsub(" .*|[0-9]", "", train$Cabin), levels = c("", LETTERS[1:7], "T"))
+test$CabinLetter <- factor(gsub(" .*|[0-9]", "", test$Cabin), levels = c("", LETTERS[1:7], "T"))
+levels(train$CabinLetter)[1] <- "X"
+
+# plot Cabin Letters
+ggplot(train, aes(y=Survived, x=CabinLetter, col = Pclass)) + geom_jitter() + facet_grid(Pclass ~ .)
+```
+
+### Correlation of Variables
+```{r, echo=FALSE, warning=FALSE}
+df <- with(train, data.frame(Pclass, Sex, Age, SibSp, Parch, Fare, FareQuant, Embarked, CabinLetter, MissingAge))
+df[] <- lapply(df, as.integer)
+corrplot(cor(df), order = "AOE")
+```
