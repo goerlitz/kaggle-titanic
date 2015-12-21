@@ -10,6 +10,9 @@ library(gridExtra)
 library(scales)
 library(corrplot)
 
+library(randomForest)
+library(ROCR)
+
 setwd("~/kaggle/titanic")
 
 # data loading
@@ -66,14 +69,7 @@ str(train)
 ```
 
 ```{r, echo=FALSE}
-# fill empty embarked cities as "S"
-train[train$Embarked == "", ]$Embarked <- "S"
-train$Embarked <- droplevels(train$Embarked)
-#test[test$Embarked == "", ]$Embarked <- "S"
-
-# cut Fares in groups
-# train$FareGroup <- cut(train$Fare, breaks=hist(as.numeric(train$Fare), breaks="Scott", plot=FALSE)$breaks, include.lowest = TRUE) # too skewed
-train$FareQuant <- cut(train$Fare, breaks=quantile(train$Fare, probs=seq(0, 1, 0.1)), include.lowest = TRUE)
+# pre-processing and clean-up
 
 # convert to factors
 train$Survived <- as.factor(train$Survived)
@@ -81,6 +77,32 @@ for (column in c("Pclass", "SibSp", "Parch")) {
   train[,column] <- as.factor(train[,column])
   test[,column]  <- as.factor(test[,column])
 }
+
+# fill empty embarked cities as "S"
+train[train$Embarked == "", ]$Embarked <- "S"
+train$Embarked <- droplevels(train$Embarked)
+#test[test$Embarked == "", ]$Embarked <- "S"
+
+# cut Fares in groups
+# train$FareGroup <- cut(train$Fare, breaks=hist(as.numeric(train$Fare), breaks="Scott", plot=FALSE)$breaks, include.lowest = TRUE) # too skewed
+fareQuantiles <- quantile(train$Fare, probs=seq(0, 1, 0.1))
+train$FareQuant <- cut(train$Fare, breaks=fareQuantiles, include.lowest = TRUE)
+test$FareQuant  <- cut(test$Fare, breaks=fareQuantiles, include.lowest = TRUE)
+
+test[is.na(test$Fare),]$Fare <- mean(train[train$Pclass == 3,]$Fare)
+
+
+# extract cabin letter (if available)
+train$CabinLetter <- factor(gsub(" .*|[0-9]", "", train$Cabin), levels = c("", LETTERS[1:7], "T"))
+test$CabinLetter <- factor(gsub(" .*|[0-9]", "", test$Cabin), levels = c("", LETTERS[1:7], "T"))
+levels(test$CabinLetter)[1] <- levels(train$CabinLetter)[1] <- "X"
+
+# ensure identical levels for train and test
+levels(train$Parch) <- levels(test$Parch) <- seq(0,9)
+
+# remove unused columns
+train <- train[,!(names(train) %in% c("PassengerId", "Name", "Ticket", "Cabin"))]
+
 ```
 
 #### fixing missing age with random values
@@ -98,6 +120,7 @@ after fix:
 ageMin <- min(train$Age, na.rm = TRUE)
 ageMax <- max(train$Age, na.rm = TRUE)
 train$Age[is.na(train$Age)] <- as.integer(runif(sum(is.na(train$Age)), ageMin, ageMax))
+test$Age[is.na(test$Age)] <- as.integer(runif(sum(is.na(test$Age)), ageMin, ageMax))
 
 summary(train$Age) # 0 NA's
 ```
@@ -140,14 +163,6 @@ ggplot(train, aes(y = Fare, x = Pclass)) + geom_point(color="blue", alpha="0.2",
 
 ### Known Cabins in Pclass
 ```{r, echo=FALSE, warning=FALSE}
-# data enhancement
-train$KnownCabin <- as.factor(train$Cabin != "")
-
- # remove everything besides cabin letter
-train$CabinLetter <- factor(gsub(" .*|[0-9]", "", train$Cabin), levels = c("", LETTERS[1:7], "T"))
-test$CabinLetter <- factor(gsub(" .*|[0-9]", "", test$Cabin), levels = c("", LETTERS[1:7], "T"))
-levels(train$CabinLetter)[1] <- "X"
-
 # plot Cabin Letters
 ggplot(train, aes(y=Survived, x=CabinLetter, col = Pclass)) + geom_jitter() + facet_grid(Pclass ~ .)
 ```
@@ -157,4 +172,47 @@ ggplot(train, aes(y=Survived, x=CabinLetter, col = Pclass)) + geom_jitter() + fa
 df <- with(train, data.frame(Pclass, Sex, Age, SibSp, Parch, Fare, FareQuant, Embarked, CabinLetter, MissingAge))
 df[] <- lapply(df, as.integer)
 corrplot(cor(df), order = "AOE")
+```
+
+### Predction Models
+
+```{r, echo=FALSE, warning=FALSE}
+fit <- randomForest(Survived ~ ., data = train)
+importance(fit)
+fit$confusion
+```
+
+```{r, echo=FALSE, warning=FALSE}
+df <- with(train, data.frame(Survived, Pclass, Sex, Age, SibSp, Parch, Fare, FareQuant, Embarked, CabinLetter))
+fit <- randomForest(Survived ~ ., data = df)
+
+
+# eval predictions
+OOB.votes <- predict (fit,train,type="prob")
+OOB.pred <- OOB.votes[,2]
+pred.obj <- prediction(OOB.pred, train$Survived)
+
+RP.perf <- performance(pred.obj, "rec","prec")
+plot (RP.perf)
+
+ROC.perf <- performance(pred.obj, "fpr","tpr")
+plot (ROC.perf)
+
+lines (RP.perf@alpha.values[[1]],RP.perf@x.values[[1]], ylim=c(0,1))
+abline(0,1)
+lines (RP.perf@alpha.values[[1]],RP.perf@y.values[[1]])
+lines (ROC.perf@alpha.values[[1]],ROC.perf@x.values[[1]])
+
+```
+
+```{r, echo=FALSE, warning=FALSE}
+export <- function(filename, result) {
+  result <- cbind(test$PassengerId, as.data.frame(result))
+  names(result) <- c("PassengerId", "Survived")
+  result$Survived <- as.numeric(result$Survived) -1
+  write.table(result, filename, sep=",", row.names=FALSE)
+}
+
+#pred <- predict(fit, test)
+#export("predictionForest.csv", pred)
 ```
