@@ -1,6 +1,7 @@
 import os
 import numpy as np
 import pandas as pd
+import seaborn as sns
 import matplotlib
 import matplotlib.pyplot as plt
 from sklearn import preprocessing
@@ -39,6 +40,11 @@ train.Age = train.Age.fillna(meanAge)
 for col in ['Survived', 'Pclass', 'Sex', 'Embarked']:
     train[col] = train[col].astype('category')
 
+# Feature Correlation
+
+corr = train.corr()
+sns.heatmap(corr, square=True, annot=True, linewidths='1', cmap="RdBu")
+plt.savefig('feature_correlation.png')
 
 # visualization with matplotlib
 plt.scatter(y=train.Fare, x=train.Age, alpha=0.2, c=train.Pclass)
