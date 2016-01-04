@@ -3,7 +3,7 @@ title: "Kaggle Titanic"
 output: html_document
 ---
 
-```{r, echo=FALSE}
+```{r, echo=FALSE, warning=FALSE, error=FALSE}
 library(ggplot2)
 library(grid)
 library(gridExtra)
@@ -95,7 +95,7 @@ test[is.na(test$Fare),]$Fare <- mean(train[train$Pclass == 3,]$Fare)
 # extract cabin letter (if available)
 train$CabinLetter <- factor(gsub(" .*|[0-9]", "", train$Cabin), levels = c("", LETTERS[1:7], "T"))
 test$CabinLetter <- factor(gsub(" .*|[0-9]", "", test$Cabin), levels = c("", LETTERS[1:7], "T"))
-levels(test$CabinLetter)[1] <- levels(train$CabinLetter)[1] <- "X"
+levels(test$CabinLetter)[1] <- levels(train$CabinLetter)[1] <- "NA"
 
 # ensure identical levels for train and test
 levels(train$Parch) <- levels(test$Parch) <- seq(0,9)
@@ -174,11 +174,19 @@ df[] <- lapply(df, as.integer)
 corrplot(cor(df), order = "AOE")
 ```
 
-### Predction Models
+### Prediction Models
+
+#### Variable Importance
 
 ```{r, echo=FALSE, warning=FALSE}
-fit <- randomForest(Survived ~ ., data = train)
+fit <- randomForest(Survived ~ ., data = train, ntree=1000, importance=TRUE)
 importance(fit)
+
+par(mar=c(5,3,2,2)+0.1)
+varImpPlot(fit, main = NULL) # or individually: varImpPlot(fit, type=1|2)
+# plot(fit, log="y") # show errors
+
+# confusion matrix
 fit$confusion
 ```
 
