@@ -62,18 +62,40 @@ travelled with very close friends or neighbors in a village, however,
 the definitions do not support such relations.
 ```
 
-#### Summary of training data:
+## Summary of training data
 
 ```{r, echo=FALSE}
 str(train)
 ```
 
-### Basic Explorative Analysis
+## Basic Explorative Analysis
+
+### Numeric feature combinations and their influence on survival
 
 ```{r, echo=FALSE, warning=FALSE}
 # convert to factors
 train$Survived <- as.factor(train$Survived)
+
+# get numeric features (without 'passengerId')
+numericCols <- names(train)[sapply(train, class) %in% c("numeric")]
+integerCols <- names(train)[sapply(train, class) %in% c("integer")]
+integerCols <- integerCols[!(integerCols %in% c("PassengerId"))]
+numericCols <- c(numericCols, integerCols)
+
+# plot numeric feature combinations (with jitter for integer values)
+numericDF <- data.frame(train[, numericCols])
+for (c in integerCols) numericDF[,c] <- jitter(numericDF[,c])
+plot(numericDF, col=train$Survived)
+```
+
+### Age and Fare Analysis
+
+```{r, echo=FALSE, warning=FALSE}
+
 train$Pclass <- as.factor(train$Pclass)
+
+# drop PassengerId, Name, Ticket
+train <- train[, !(names(train) %in% c('PassengerId', 'Name', 'Ticket'))]
 
 # scatterhist plot based on https://gist.github.com/mkuhn/5434709
 g_legend<-function(a.gplot){
@@ -83,20 +105,28 @@ g_legend<-function(a.gplot){
     return(legend)
 }
 
+hide_legend <- theme(legend.position = "none")
+
 # simple plots
-ageFare <- qplot(Age, Fare, data=train, color=Pclass, xlim=c(0,80), ylim=c(0,520))
+ageFare <- qplot(data=train, Age, Fare, color=Pclass, xlim=c(0,80), ylim=c(0,520))
 ageHist <- qplot(data=train, Age, binwidth=1, fill=Pclass, xlim=c(0,80)) +
-  theme(legend.position = "none", axis.ticks.x = element_blank(), axis.text.x = element_blank()) +
-  labs(x=NULL)
+  hide_legend + labs(x=NULL) +
+  theme(axis.ticks.x = element_blank(), axis.text.x = element_blank())
+
 fareHist <- qplot(data=train, Fare, binwidth=10, fill=Pclass, xlim=c(0,520)) +
-  theme(legend.position = "none", axis.ticks.y = element_blank(), axis.text.y = element_blank()) +
-  coord_flip() + labs(x=NULL)
+  hide_legend + labs(x=NULL) +
+  theme(axis.ticks.y = element_blank(), axis.text.y = element_blank()) +
+  coord_flip()
 grid.arrange(ageHist, g_legend(ageFare), ageFare + theme(legend.position = "none"), fareHist,
              nrow=2, ncol=2, widths=c(3/4,1/4), heights=c(1/5,4/5))
+```
 
-gSurvived <- qplot(data=train, as.factor(Survived), fill=Pclass, xlab="Survived", ylim=c(0,600)) + theme(legend.position = "none")
-gSex      <- qplot(data=train, Sex, fill=Pclass, ylim=c(0,600)) + theme(legend.position = "none")
-gPclass   <- qplot(data=train, as.factor(Pclass), fill=Pclass, xlab="Pclass", ylim=c(0,600))
+### Categorial Feature Analysis
+
+```{r, echo=FALSE}
+gSurvived <- qplot(data=train, Survived, fill=Pclass, ylim=c(0,600)) + hide_legend
+gSex      <- qplot(data=train, Sex,      fill=Pclass, ylim=c(0,600)) + hide_legend
+gPclass   <- qplot(data=train, Pclass,   fill=Pclass, ylim=c(0,600))
 gEmbarked <- qplot(data=train, as.factor(Embarked), fill=Pclass, xlab="Embarked", ylim=c(0,680)) + theme(legend.position = "none")
 gSibSp    <- qplot(data=train, as.factor(SibSp), fill=Pclass, xlab="SibSp", ylim=c(0,680)) + theme(legend.position = "none")
 gParch    <- qplot(data=train, as.factor(Parch), fill=Pclass, xlab="Parch", ylim=c(0,680))
@@ -106,6 +136,14 @@ grid.arrange(gSurvived, gSex, gPclass, gEmbarked, gSibSp, gParch, nrow=2, ncol=3
 
 ```{r, echo=FALSE}
 # pre-processing and clean-up
+
+clean_data <- function(df) {
+  df$Age[is.na(df$Age)] <- mean(df$Age, na.rm = TRUE) # fill NA with mean Age
+  df$Fare[is.na(df$Fare)] <- mean(df$Fare[df$Pclass == 3]) # fill NA with mean Fare
+  df$Embarked[df$Embarked == ""] <- "S" # fill empty Embarked with 'S' (most frequent)
+  df$Embarked <- droplevels(df$Embarked)
+  return(df)
+}
 
 # convert to factors
 train$Survived <- as.factor(train$Survived)
@@ -210,8 +248,12 @@ fit$confusion
 ```
 
 ```{r, echo=FALSE, warning=FALSE}
+# prepare data frame for training
 df <- with(train, data.frame(Survived, Pclass, Sex, Age, SibSp, Parch, Fare, FareQuant, Embarked, CabinLetter))
 fit <- randomForest(Survived ~ ., data = df)
+
+# roc curve
+prob <- predict(fit, type = "prob")[,2]
 
 
 # eval predictions
@@ -230,6 +272,28 @@ abline(0,1)
 lines (RP.perf@alpha.values[[1]],RP.perf@y.values[[1]])
 lines (ROC.perf@alpha.values[[1]],ROC.perf@x.values[[1]])
 
+```
+
+### Logistic Regression
+
+```{r, echo=FALSE}
+train$Pclass <- as.numeric(train$Pclass)
+train$SibSp <- as.numeric(train$SibSp)
+train$Parch <- as.numeric(train$Parch)
+
+logdf <- with(train, data.frame(Survived, Pclass, Sex, Age, SibSp, Parch, Fare, Embarked))
+
+# normalize numeric columns
+logdf[, numericCols] <- scale(logdf[, numericCols])
+
+fit <- glm(Survived ~ ., data=logdf, family="binomial")
+summary(logdf)
+confint(fit)
+
+# confusion matrix and roc curve
+prob <- predict(fit, type = "response")
+g <- roc(Survived ~ prob, data = train)
+plot(g)
 ```
 
 ```{r, echo=FALSE, warning=FALSE}
