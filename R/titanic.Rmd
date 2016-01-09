@@ -3,7 +3,9 @@ title: "Kaggle Titanic"
 output: html_document
 ---
 
-```{r, echo=FALSE, warning=FALSE, error=FALSE}
+[Titanic dataset from Kaggle](https://www.kaggle.com/c/titanic)
+
+```{r, echo=FALSE, message=FALSE}
 library(ggplot2)
 library(grid)
 library(gridExtra)
@@ -20,9 +22,7 @@ train <- read.csv("data/train.csv")
 test <- read.csv("data/test.csv")
 ```
 
-#### Description from Web page:
-
-```{}
+```
 VARIABLE DESCRIPTIONS:
 survival        Survival
                 (0 = No; 1 = Yes)
@@ -62,10 +62,46 @@ travelled with very close friends or neighbors in a village, however,
 the definitions do not support such relations.
 ```
 
-#### Overview training data set:
+#### Summary of training data:
 
 ```{r, echo=FALSE}
 str(train)
+```
+
+### Basic Explorative Analysis
+
+```{r, echo=FALSE, warning=FALSE}
+# convert to factors
+train$Survived <- as.factor(train$Survived)
+train$Pclass <- as.factor(train$Pclass)
+
+# scatterhist plot based on https://gist.github.com/mkuhn/5434709
+g_legend<-function(a.gplot){
+    tmp <- ggplot_gtable(ggplot_build(a.gplot))
+    leg <- which(sapply(tmp$grobs, function(x) x$name) == "guide-box")
+    legend <- tmp$grobs[[leg]]
+    return(legend)
+}
+
+# simple plots
+ageFare <- qplot(Age, Fare, data=train, color=Pclass, xlim=c(0,80), ylim=c(0,520))
+ageHist <- qplot(data=train, Age, binwidth=1, fill=Pclass, xlim=c(0,80)) +
+  theme(legend.position = "none", axis.ticks.x = element_blank(), axis.text.x = element_blank()) +
+  labs(x=NULL)
+fareHist <- qplot(data=train, Fare, binwidth=10, fill=Pclass, xlim=c(0,520)) +
+  theme(legend.position = "none", axis.ticks.y = element_blank(), axis.text.y = element_blank()) +
+  coord_flip() + labs(x=NULL)
+grid.arrange(ageHist, g_legend(ageFare), ageFare + theme(legend.position = "none"), fareHist,
+             nrow=2, ncol=2, widths=c(3/4,1/4), heights=c(1/5,4/5))
+
+gSurvived <- qplot(data=train, as.factor(Survived), fill=Pclass, xlab="Survived", ylim=c(0,600)) + theme(legend.position = "none")
+gSex      <- qplot(data=train, Sex, fill=Pclass, ylim=c(0,600)) + theme(legend.position = "none")
+gPclass   <- qplot(data=train, as.factor(Pclass), fill=Pclass, xlab="Pclass", ylim=c(0,600))
+gEmbarked <- qplot(data=train, as.factor(Embarked), fill=Pclass, xlab="Embarked", ylim=c(0,680)) + theme(legend.position = "none")
+gSibSp    <- qplot(data=train, as.factor(SibSp), fill=Pclass, xlab="SibSp", ylim=c(0,680)) + theme(legend.position = "none")
+gParch    <- qplot(data=train, as.factor(Parch), fill=Pclass, xlab="Parch", ylim=c(0,680))
+
+grid.arrange(gSurvived, gSex, gPclass, gEmbarked, gSibSp, gParch, nrow=2, ncol=3)
 ```
 
 ```{r, echo=FALSE}
@@ -124,23 +160,6 @@ test$Age[is.na(test$Age)] <- as.integer(runif(sum(is.na(test$Age)), ageMin, ageM
 
 summary(train$Age) # 0 NA's
 ```
-
-### Explorative Analysis
-```{r, echo=FALSE, warning=FALSE}
-# simple plots
-qplot(data=train, Age, binwidth=1)
-
-gPclass   <- qplot(data=train, Pclass)
-gEmbarked <- qplot(data=train, Embarked)
-gSurvived <- qplot(data=train, Survived)
-gSex      <- qplot(data=train, Sex)
-gSibSp    <- qplot(data=train, SibSp)
-gParch    <- qplot(data=train, Parch)
-
-grid.arrange(gSurvived, gSex, gPclass, gEmbarked, gSibSp, gParch, nrow=2, ncol=3)
-```
-
-
 
 ### Survival by Sex, Age, and Pclass
 ```{r, echo=FALSE, warning=FALSE}
