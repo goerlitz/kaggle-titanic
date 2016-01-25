@@ -11,6 +11,7 @@ library(grid)
 library(gridExtra)
 library(scales)
 library(corrplot)
+library(pROC)
 
 library(randomForest)
 library(ROCR)
@@ -86,6 +87,7 @@ numericCols <- c(numericCols, integerCols)
 numericDF <- data.frame(train[, numericCols])
 for (c in integerCols) numericDF[,c] <- jitter(numericDF[,c])
 plot(numericDF, col=train$Survived)
+legend("topright", c("Survived=0","Survived=1"), col=c("black", "blue"), bty="n")
 ```
 
 ### Age and Fare Analysis
@@ -228,12 +230,18 @@ ggplot(train, aes(y=Survived, x=CabinLetter, col = Pclass)) + geom_jitter() + fa
 ```{r, echo=FALSE, warning=FALSE}
 df <- with(train, data.frame(Pclass, Sex, Age, SibSp, Parch, Fare, FareQuant, Embarked, CabinLetter, MissingAge))
 df[] <- lapply(df, as.integer)
-corrplot(cor(df), order = "AOE")
+
+df$FamilySize <- df$Parch + df$SibSp + 1
+df <- df[, !(names(df) %in% c('CabinLetter', 'FareQuant', 'Pclass', "SibSp", "Parch"))]
+
+corrplot(cor(df, method = "spearman"), order = "AOE")
 ```
 
 ### Prediction Models
 
-#### Variable Importance
+#### Random Forest
+
+Variable Importance:
 
 ```{r, echo=FALSE, warning=FALSE}
 fit <- randomForest(Survived ~ ., data = train, ntree=1000, importance=TRUE)
@@ -252,26 +260,21 @@ fit$confusion
 df <- with(train, data.frame(Survived, Pclass, Sex, Age, SibSp, Parch, Fare, FareQuant, Embarked, CabinLetter))
 fit <- randomForest(Survived ~ ., data = df)
 
-# roc curve
 prob <- predict(fit, type = "prob")[,2]
 
-
-# eval predictions
-OOB.votes <- predict (fit,train,type="prob")
-OOB.pred <- OOB.votes[,2]
-pred.obj <- prediction(OOB.pred, train$Survived)
-
-RP.perf <- performance(pred.obj, "rec","prec")
-plot (RP.perf)
-
-ROC.perf <- performance(pred.obj, "fpr","tpr")
-plot (ROC.perf)
-
-lines (RP.perf@alpha.values[[1]],RP.perf@x.values[[1]], ylim=c(0,1))
-abline(0,1)
-lines (RP.perf@alpha.values[[1]],RP.perf@y.values[[1]])
-lines (ROC.perf@alpha.values[[1]],ROC.perf@x.values[[1]])
-
+# roc curve (ROCR)
+pred <- prediction(prob, train$Survived)
+perf <- performance(pred, "tpr", "fpr")
+#plot(perf, avg= "threshold", colorize=T, lwd= 3, main= "With ROCR you can produce standard plots like ROC curves ...")
+rocRF <- data.frame(fpr = unlist(perf@x.values),
+                    tpr = unlist(perf@y.values),
+                    alpha = unlist(perf@alpha.values))
+#ggplot(rocRF, aes(x = fpr, y = tpr)) + geom_line() +
+#  coord_fixed(ratio = 1) +
+#  xlab("False Positive Rate") +
+#  ylab("True Positive Rate") +
+#  scale_x_continuous(breaks=seq(0, 1, 0.2)) + # Ticks from 0-1, every .2
+#  scale_y_continuous(breaks=seq(0, 1, 0.2))   # Ticks from 0-1, every .2
 ```
 
 ### Logistic Regression
@@ -287,13 +290,37 @@ logdf <- with(train, data.frame(Survived, Pclass, Sex, Age, SibSp, Parch, Fare, 
 logdf[, numericCols] <- scale(logdf[, numericCols])
 
 fit <- glm(Survived ~ ., data=logdf, family="binomial")
-summary(logdf)
-confint(fit)
+summary(fit)
+#coef(fit)
+#confint(fit)
 
-# confusion matrix and roc curve
 prob <- predict(fit, type = "response")
-g <- roc(Survived ~ prob, data = train)
-plot(g)
+
+# draw ROC curve (ROCR package)
+pred <- prediction(prob, train$Survived)
+perf <- performance(pred, "tpr", "fpr")
+rocLR <- data.frame(fpr = unlist(perf@x.values),
+                    tpr = unlist(perf@y.values),
+                    alpha = unlist(perf@alpha.values))
+# ggplot(rocLR, aes(x = fpr, y = tpr)) + geom_line() +
+#   coord_fixed(ratio = 1) +
+#   xlab("False Positive Rate") +
+#   ylab("True Positive Rate") +
+#   scale_x_continuous(breaks=seq(0, 1, 0.2)) + # Ticks from 0-1, every .2
+#   scale_y_continuous(breaks=seq(0, 1, 0.2))   # Ticks from 0-1, every .2
+```
+
+```{r, echo=FALSE, warning=FALSE}
+# combine both roc plots
+rocRF$model <- "Random Forest"
+rocLR$model <- "Logistic Regression"
+rocDF <- rbind(rocRF, rocLR)
+ggplot(rocDF, aes(x=fpr, y=tpr, col = model)) + geom_line() +
+  coord_fixed(ratio = 1) +
+  xlab("False Positive Rate") +
+  ylab("True Positive Rate") +
+  scale_x_continuous(breaks=seq(0, 1, 0.2)) + # Ticks from 0-1, every .2
+  scale_y_continuous(breaks=seq(0, 1, 0.2))   # Ticks from 0-1, every .2
 ```
 
 ```{r, echo=FALSE, warning=FALSE}

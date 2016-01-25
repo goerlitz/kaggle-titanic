@@ -1,11 +1,17 @@
-## setwd("~/study/coursera/datasci/kaggle-titanic")
-
+library(ggplot2)
 library(rpart)         # decision tree
 library(randomForest)
 library(e1071)         # svm
 
+setwd("~/kaggle/titanic")
+
 data <- read.csv("data/train.csv")
 test <- read.csv("data/test.csv")
+
+# EXPLORATIVE ANALYSIS
+qplot(y = Survived, x = Sex, data = data, position="jitter")
+ggplot(data, aes(y = Age, x = Pclass)) + geom_point(position="jitter")
+
 
 # need factors
 data$Survived <- as.factor(data$Survived)
@@ -18,8 +24,9 @@ levels(data$Parch) <- levels(test$Parch) <- seq(0,9)
 levels(data$Embarked) <- levels(test$Embarked) <- c("", "C", "Q", "S")
 
 # replace NA in Age/Fare with reasonable default value (0, mean?)
-data$Age[is.na(data$Age)] <- mean(data$Age, na.rm = TRUE)
-test$Age[is.na(test$Age)] <- mean(data$Age, na.rm = TRUE)
+meanAge <- mean(data$Age, na.rm = TRUE)
+data$Age[is.na(data$Age)] <- meanAge
+test$Age[is.na(test$Age)] <- meanAge
 test$Fare[is.na(test$Fare)] <- mean(data$Fare, na.rm = TRUE)
 
 # add cabin letter
