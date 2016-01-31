@@ -5,24 +5,6 @@ output: html_document
 
 [Titanic dataset from Kaggle](https://www.kaggle.com/c/titanic)
 
-```{r, echo=FALSE, message=FALSE}
-library(ggplot2)
-library(grid)
-library(gridExtra)
-library(scales)
-library(corrplot)
-library(pROC)
-
-library(randomForest)
-library(ROCR)
-
-setwd("~/kaggle/titanic")
-
-# data loading
-train <- read.csv("data/train.csv")
-test <- read.csv("data/test.csv")
-```
-
 ```
 VARIABLE DESCRIPTIONS:
 survival        Survival
@@ -63,41 +45,112 @@ travelled with very close friends or neighbors in a village, however,
 the definitions do not support such relations.
 ```
 
-## Summary of training data
+```{r, echo=FALSE, message=FALSE}
+library(ggplot2)
+library(GGally)
+library(grid)
+library(gridExtra)
+library(scales)
+library(corrplot)
+library(pROC)
 
-```{r, echo=FALSE}
+library(randomForest)
+library(ROCR)
+
+setwd("~/kaggle/titanic")
+
+# data loading
+train <- read.csv("data/train.csv")
+test <- read.csv("data/test.csv")
+```
+
+## Explorative Analysis
+
+### Overview of training data
+
+```{r, echo=FALSE, message=FALSE}
 str(train)
 ```
 
-## Basic Explorative Analysis
+### Basic Data Preparation
 
-### Numeric feature combinations and their influence on survival
+* Convert 'Survived' and 'Pclass' to factors
+* Extract Cabin Letters
+* Remove PassengerID, Name, Ticket, Cabin
 
-```{r, echo=FALSE, warning=FALSE}
-# convert to factors
+```{r, echo=FALSE}
+
+# extract cabin letter from cabin field
+cabin_letter <- function(vec) {
+  f <- factor(gsub(" .*|[0-9]", "", vec), levels = c("", LETTERS[1:7], "T"))
+  levels(f)[1] <- "?"
+  return(f)
+}
+
+# convert to factors: Survived, Pclass
 train$Survived <- as.factor(train$Survived)
+for (column in c("Pclass")) {
+  train[,column] <- as.factor(train[,column])
+  test[,column]  <- as.factor(test[,column])
+}
 
-# get numeric features (without 'passengerId')
+# extract cabin letter
+dflist <- list(train = train, test = test)
+dflist <- lapply(dflist, function(df) {
+  df$CabinLetter <- cabin_letter(df$Cabin)
+  df
+})
+train <- dflist$train
+test <- dflist$train
+
+# drop PassengerId, Name, Ticket, Cabin
+train <- train[, !(names(train) %in% c('PassengerId', 'Name', 'Ticket', 'Cabin'))]
+```
+
+### Pairwise Feature Comparison
+
+```{r, echo=FALSE, warning=FALSE, message=FALSE}
+#for (c in integerCols) numericDF[,c] <- jitter(numericDF[,c])
+#plot(numericDF, col=as.factor(train$Survived))
+
+gg <- ggpairs(data = train,
+#        columns = c(numericCols, "Sex", "Survived"),
+        upper = list(continuous = "smooth", combo = "box"),
+        mapping = (ggplot2::aes(alpha = 0.1, color = Survived))
+        )
+gg + theme(text = element_text(size=6), axis.text = element_text(size=5), axis.title = element_text(size=6))
+```
+
+```{r, echo=FALSE, message=FALSE}
+# get numeric features
 numericCols <- names(train)[sapply(train, class) %in% c("numeric")]
 integerCols <- names(train)[sapply(train, class) %in% c("integer")]
-integerCols <- integerCols[!(integerCols %in% c("PassengerId"))]
+
+# remove 'Survived' and 'passengerId'
+integerCols <- integerCols[!(integerCols %in% c("Survived", "PassengerId"))]
 numericCols <- c(numericCols, integerCols)
 
-# plot numeric feature combinations (with jitter for integer values)
-numericDF <- data.frame(train[, numericCols])
-for (c in integerCols) numericDF[,c] <- jitter(numericDF[,c])
-plot(numericDF, col=train$Survived)
-legend("topright", c("Survived=0","Survived=1"), col=c("black", "blue"), bty="n")
+cat("Numeric features:", paste0(numericCols, collapse=", "))
 ```
+
+### Survival by Sex, Age, and Pclass
+```{r, echo=FALSE, warning=FALSE}
+
+gAge <- ggplot(train, aes(x=Survived, y=Age))
+gAge <- gAge + geom_violin(adjust = 0.5, alpha = 0.3, width=0.5)
+gAge <- gAge + geom_dotplot(binaxis='y', stackdir='center', dotsize=0.8, alpha= 0.4, binwidth = 1, position=position_jitter(width = 0.05), aes(fill=Sex, col=Sex))
+gAge <- gAge + facet_grid(Pclass ~ Sex)
+#gAge <- gAge + theme(legend.position = c(1, 0.3), legend.justification = c(1, 1), legend.text=element_text(size=6), legend.background = element_rect(fill=alpha('white', 0.5)))
+gAge + coord_flip()
+
+#gSex <- qplot(y = Survived, x = Sex, data = train, position="jitter", col = Sex, dotsize=0.5, alpha= 0.4) + facet_grid(. ~ Sex)
+#grid.arrange(gAge + coord_flip(), gSex + ylab("") + theme(legend.position = "none"), ncol=2)
+```
+
 
 ### Age and Fare Analysis
 
 ```{r, echo=FALSE, warning=FALSE}
-
-train$Pclass <- as.factor(train$Pclass)
-
-# drop PassengerId, Name, Ticket
-train <- train[, !(names(train) %in% c('PassengerId', 'Name', 'Ticket'))]
 
 # scatterhist plot based on https://gist.github.com/mkuhn/5434709
 g_legend<-function(a.gplot){
@@ -147,13 +200,6 @@ clean_data <- function(df) {
   return(df)
 }
 
-# convert to factors
-train$Survived <- as.factor(train$Survived)
-for (column in c("Pclass", "SibSp", "Parch")) {
-  train[,column] <- as.factor(train[,column])
-  test[,column]  <- as.factor(test[,column])
-}
-
 # fill empty embarked cities as "S"
 train[train$Embarked == "", ]$Embarked <- "S"
 train$Embarked <- droplevels(train$Embarked)
@@ -165,19 +211,11 @@ fareQuantiles <- quantile(train$Fare, probs=seq(0, 1, 0.1))
 train$FareQuant <- cut(train$Fare, breaks=fareQuantiles, include.lowest = TRUE)
 test$FareQuant  <- cut(test$Fare, breaks=fareQuantiles, include.lowest = TRUE)
 
-test[is.na(test$Fare),]$Fare <- mean(train[train$Pclass == 3,]$Fare)
+#test[is.na(test$Fare),]$Fare <- mean(train[train$Pclass == 3,]$Fare)
 
-
-# extract cabin letter (if available)
-train$CabinLetter <- factor(gsub(" .*|[0-9]", "", train$Cabin), levels = c("", LETTERS[1:7], "T"))
-test$CabinLetter <- factor(gsub(" .*|[0-9]", "", test$Cabin), levels = c("", LETTERS[1:7], "T"))
-levels(test$CabinLetter)[1] <- levels(train$CabinLetter)[1] <- "NA"
 
 # ensure identical levels for train and test
 levels(train$Parch) <- levels(test$Parch) <- seq(0,9)
-
-# remove unused columns
-train <- train[,!(names(train) %in% c("PassengerId", "Name", "Ticket", "Cabin"))]
 
 ```
 
@@ -199,20 +237,6 @@ train$Age[is.na(train$Age)] <- as.integer(runif(sum(is.na(train$Age)), ageMin, a
 test$Age[is.na(test$Age)] <- as.integer(runif(sum(is.na(test$Age)), ageMin, ageMax))
 
 summary(train$Age) # 0 NA's
-```
-
-### Survival by Sex, Age, and Pclass
-```{r, echo=FALSE, warning=FALSE}
-
-gAge <- ggplot(train, aes(x=Survived, y=Age))
-gAge <- gAge + geom_violin(adjust = 0.5, alpha = 0.3, width=0.5)
-gAge <- gAge + geom_dotplot(binaxis='y', stackdir='center', dotsize=0.8, alpha= 0.4, binwidth = 1, position=position_jitter(width = 0.05), aes(fill=Sex, col=Sex))
-gAge <- gAge + facet_grid(Pclass ~ Sex)
-#gAge <- gAge + theme(legend.position = c(1, 0.3), legend.justification = c(1, 1), legend.text=element_text(size=6), legend.background = element_rect(fill=alpha('white', 0.5)))
-gAge + coord_flip()
-
-#gSex <- qplot(y = Survived, x = Sex, data = train, position="jitter", col = Sex, dotsize=0.5, alpha= 0.4) + facet_grid(. ~ Sex)
-#grid.arrange(gAge + coord_flip(), gSex + ylab("") + theme(legend.position = "none"), ncol=2)
 ```
 
 ### Fare Distribution
@@ -244,6 +268,8 @@ corrplot(cor(df, method = "spearman"), order = "AOE")
 Variable Importance:
 
 ```{r, echo=FALSE, warning=FALSE}
+str(train)
+
 fit <- randomForest(Survived ~ ., data = train, ntree=1000, importance=TRUE)
 importance(fit)
 
