@@ -46,22 +46,24 @@ the definitions do not support such relations.
 ```
 
 ```{r, echo=FALSE, message=FALSE}
+library(caret)
+library(corrplot)
 library(ggplot2)
 library(GGally)
 library(grid)
 library(gridExtra)
 library(scales)
-library(corrplot)
 library(pROC)
-
-library(randomForest)
 library(ROCR)
+library(randomForest)
+```
 
-setwd("~/kaggle/titanic")
+```{r, echo=TRUE, message=FALSE}
+#setwd("~/kaggle/titanic")
 
 # data loading
-train <- read.csv("data/train.csv")
-test <- read.csv("data/test.csv")
+train <- read.csv("../data/train.csv")
+test <- read.csv("../data/test.csv")
 ```
 
 ## Explorative Analysis
@@ -204,8 +206,11 @@ clean_data <- function(df) {
 train[train$Embarked == "", ]$Embarked <- "S"
 train$Embarked <- droplevels(train$Embarked)
 #test[test$Embarked == "", ]$Embarked <- "S"
+```
 
-# cut Fares in groups
+# Cut Fares in groups
+
+```{r, echo=FALSE}
 # train$FareGroup <- cut(train$Fare, breaks=hist(as.numeric(train$Fare), breaks="Scott", plot=FALSE)$breaks, include.lowest = TRUE) # too skewed
 fareQuantiles <- quantile(train$Fare, probs=seq(0, 1, 0.1))
 train$FareQuant <- cut(train$Fare, breaks=fareQuantiles, include.lowest = TRUE)
@@ -256,45 +261,100 @@ df <- with(train, data.frame(Pclass, Sex, Age, SibSp, Parch, Fare, FareQuant, Em
 df[] <- lapply(df, as.integer)
 
 df$FamilySize <- df$Parch + df$SibSp + 1
-df <- df[, !(names(df) %in% c('CabinLetter', 'FareQuant', 'Pclass', "SibSp", "Parch"))]
+#df <- df[, !(names(df) %in% c('CabinLetter', 'FareQuant', 'Pclass', "SibSp", "Parch"))]
 
 corrplot(cor(df, method = "spearman"), order = "AOE")
 ```
 
-### Prediction Models
-
-#### Random Forest
-
-Variable Importance:
+# Prediction Models
 
 ```{r, echo=FALSE, warning=FALSE}
-str(train)
+# create training, validation, and test dataset
 
+f <- createFolds(train$Survived, k = 10)
+
+# print distribution of Survived values
+#sapply(f, function(i) table(train$Survived[i]))
+
+# assign training, validation, and training dataset
+tst <- train[f[[1]],]
+val <- train[f[[2]],]
+trn <- train[-c(f[[1]],f[[2]]),]
+```
+
+```{r, echo=FALSE, warning=FALSE}
+
+predictRF <- function(formula, data, test) {
+  fit <- randomForest(formula, data = data)
+  prob <- predict(fit, newdata = test, type="prob")[,2]
+  prob
+}
+```
+
+## Random Forest
+
+```{r, echo=FALSE, warning=FALSE}
+# train forest
 fit <- randomForest(Survived ~ ., data = train, ntree=1000, importance=TRUE)
-importance(fit)
 
-par(mar=c(5,3,2,2)+0.1)
-varImpPlot(fit, main = NULL) # or individually: varImpPlot(fit, type=1|2)
-# plot(fit, log="y") # show errors
+# plot variable importance
+par(mar=c(5,3,2,2)+0.1) # set margin or plot
+varImpPlot(fit, main = "Variable Importance") # or individually: varImpPlot(fit, type=1|2)
 
-# confusion matrix
+# plot variable importance as bars
+impt1 <- data.frame(importance(fit, type=1))
+impt1$Vars <- unlist(labels(impt1)[1])
+ggplot(impt1, aes(y=MeanDecreaseAccuracy, x=Vars)) + geom_bar(stat = "identity", fill = "blue") + coord_flip()
+# plot(fit, log="y") # show tree errors
+```
+
+### Confusion Matrix
+
+```{r, echo=FALSE, warning=FALSE}
 fit$confusion
 ```
+
 
 ```{r, echo=FALSE, warning=FALSE}
 # prepare data frame for training
 df <- with(train, data.frame(Survived, Pclass, Sex, Age, SibSp, Parch, Fare, FareQuant, Embarked, CabinLetter))
-fit <- randomForest(Survived ~ ., data = df)
 
-prob <- predict(fit, type = "prob")[,2]
+prob <- predictRF(Survived ~ ., data = df)
 
-# roc curve (ROCR)
+# ROC Curve
 pred <- prediction(prob, train$Survived)
 perf <- performance(pred, "tpr", "fpr")
-#plot(perf, avg= "threshold", colorize=T, lwd= 3, main= "With ROCR you can produce standard plots like ROC curves ...")
+plot(perf, colorize=T, lwd= 3, main= "ROC Curve - Random Forest")
+
+# AUC
+print(paste("auc: ", unlist(performance(pred, "auc")@y.values)))
+print(paste("max acc: ", max(unlist(performance(pred, "acc")@y.values))))
+
+
 rocRF <- data.frame(fpr = unlist(perf@x.values),
                     tpr = unlist(perf@y.values),
                     alpha = unlist(perf@alpha.values))
+
+# predict for test data
+prob <- predictRF(Survived ~ ., data = trn, test = tst)
+
+# Roc Curve
+pred <- prediction(prob, tst$Survived)
+perf <- performance(pred, "tpr", "fpr")
+plot(perf, colorize=T, lwd= 3, main= "ROC Curve - Random Forest")
+
+# AUC
+print(paste("auc: ", unlist(performance(pred, "auc")@y.values)))
+print(paste("max acc: ", max(unlist(performance(pred, "acc")@y.values))))
+
+
+
+#par(mar=c(5,5,5,5)+0.1) # margin
+#perf <- performance(pred, "lift", "rpp")
+#plot(perf, avg= "threshold", colorize=T, lwd= 3,
+#     main= "... and Lift charts.")
+#plot(perf, lty=3, col="grey78", add=T)
+
 #ggplot(rocRF, aes(x = fpr, y = tpr)) + geom_line() +
 #  coord_fixed(ratio = 1) +
 #  xlab("False Positive Rate") +
