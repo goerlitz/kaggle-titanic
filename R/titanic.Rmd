@@ -289,6 +289,33 @@ predictRF <- function(formula, data, test) {
   prob <- predict(fit, newdata = test, type="prob")[,2]
   prob
 }
+
+predictLR <- function(formula, data, test) {
+  fit <- glm(formula, data = data, family="binomial")
+  prob <- predict(fit, newdata = test, type = "response")
+  prob
+}
+
+# plot a ROC curve for given predicted probabilities and target labels
+plotROC <- function(prob, target, title="ROC Curve") {
+  pred <- prediction(predictions = prob, labels = target)
+  perf <- performance(pred, "tpr", "fpr")
+  plot(perf, colorize=T, lwd=3, main=title)
+  #abline(0,1,col="gray")
+  lines(x=c(0, 1), y=c(0, 1), col="grey", lwd=2)
+  auc = signif(as.numeric(performance(pred, "auc")@y.values), 3)
+  text(.8,.1, paste("AUC: ", auc))
+}
+
+# plot a gain chart (accumulated lift)
+plotGain <- function(data, target, perf, title="Gain Chart") {
+  ratio <- nrow(data[target == 1,]) / nrow(data)
+  plot(x=c(0, ratio, 1), y=c(0, 1, 1), type="l", col="grey", lwd=2,
+       main=title, xlab="Rate of positive predictions (Population)", ylab="True positive rate")
+  lines(x=c(0, 1), y=c(0, 1), col="grey", lwd=2)
+  lines(x=unlist(perf@x.values), y=unlist(perf@y.values), col="red", lwd= 3)
+}
+
 ```
 
 ## Random Forest
@@ -321,39 +348,28 @@ df <- with(train, data.frame(Survived, Pclass, Sex, Age, SibSp, Parch, Fare, Far
 
 prob <- predictRF(Survived ~ ., data = df)
 
-# ROC Curve
 pred <- prediction(prob, train$Survived)
 perf <- performance(pred, "tpr", "fpr")
-plot(perf, colorize=T, lwd= 3, main= "ROC Curve - Random Forest")
-
-# AUC
-print(paste("auc: ", unlist(performance(pred, "auc")@y.values)))
-print(paste("max acc: ", max(unlist(performance(pred, "acc")@y.values))))
-
-
 rocRF <- data.frame(fpr = unlist(perf@x.values),
                     tpr = unlist(perf@y.values),
                     alpha = unlist(perf@alpha.values))
+perf <- performance(pred, "tpr", "rpp")
+
+par(mfrow=c(2,2))
+plotROC(prob, train$Survived, "ROC Curve - Train")
+plotGain(train, train$Survived, perf, "Gain - Train")
+
 
 # predict for test data
 prob <- predictRF(Survived ~ ., data = trn, test = tst)
 
-# Roc Curve
 pred <- prediction(prob, tst$Survived)
-perf <- performance(pred, "tpr", "fpr")
-plot(perf, colorize=T, lwd= 3, main= "ROC Curve - Random Forest")
+perf <- performance(pred, "tpr", "rpp")
 
-# AUC
-print(paste("auc: ", unlist(performance(pred, "auc")@y.values)))
-print(paste("max acc: ", max(unlist(performance(pred, "acc")@y.values))))
+#par(mfrow=c(2,2))
+plotROC(prob, tst$Survived, "ROC Curve - Test")
+plotGain(tst, tst$Survived, perf, "Gain - Test")
 
-
-
-#par(mar=c(5,5,5,5)+0.1) # margin
-#perf <- performance(pred, "lift", "rpp")
-#plot(perf, avg= "threshold", colorize=T, lwd= 3,
-#     main= "... and Lift charts.")
-#plot(perf, lty=3, col="grey78", add=T)
 
 #ggplot(rocRF, aes(x = fpr, y = tpr)) + geom_line() +
 #  coord_fixed(ratio = 1) +
@@ -380,15 +396,26 @@ summary(fit)
 #coef(fit)
 #confint(fit)
 
-prob <- predict(fit, type = "response")
+# predict with linear regression and plot curve
+prob <- predictLR(Survived ~ ., data = logdf)
+plotROC(prob, logdf$Survived, "ROC Curve - Logistic Regression")
 
-# draw ROC curve (ROCR package)
-pred <- prediction(prob, train$Survived)
+
+pred <- prediction(prob, logdf$Survived)
 perf <- performance(pred, "tpr", "fpr")
+# get values
 rocLR <- data.frame(fpr = unlist(perf@x.values),
                     tpr = unlist(perf@y.values),
                     alpha = unlist(perf@alpha.values))
-# ggplot(rocLR, aes(x = fpr, y = tpr)) + geom_line() +
+
+
+
+prob <- predictLR(Survived ~ ., data = trn, test = tst)
+plotROC(prob, tst$Survived, "ROC Curve - Logistic Regression")
+
+
+# draw ROC curve (ROCR package)
+# ggplot(rocLR) + geom_line(aes(x = fpr, y = tpr, col=alpha)) +
 #   coord_fixed(ratio = 1) +
 #   xlab("False Positive Rate") +
 #   ylab("True Positive Rate") +
